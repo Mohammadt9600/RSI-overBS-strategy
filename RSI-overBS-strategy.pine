@@ -1,7 +1,8 @@
+
 //@version=6
 strategy(
-     title = "RSI Momentum Breakout with Extended TP Trailing",
-     shorttitle = "RSI Momentum Pro",
+     title = "RSI Momentum Breakout Strategy",
+     shorttitle = "RSI Momentum",
      overlay = true,
      pyramiding = 0,
      process_orders_on_close = true,
@@ -40,6 +41,7 @@ rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
 // State Tracking (Ensuring RSI came from prep level before triggering)
 //------------------------------------------------------------------------------
 
+// Check if RSI was below/above prep levels recently
 var bool primedForLong = false
 var bool primedForShort = false
 
@@ -55,6 +57,7 @@ longCond = primedForLong and ta.crossover(rsi, longCrossLevel)
 // Short Condition: Primed from above 40, now crossing below 30 for the first time
 shortCond = primedForShort and ta.crossunder(rsi, shortCrossLevel)
 
+// Reset prime state on trigger
 if longCond
     primedForLong := false
 
@@ -67,12 +70,10 @@ if shortCond
 
 var float activeStopLoss = na
 var float activeTakeProfit = na
-var bool  tpAchieved = false
 
 if strategy.position_size == 0
     activeStopLoss := na
     activeTakeProfit := na
-    tpAchieved := false
 
 canTrade = strategy.position_size == 0
 
@@ -87,7 +88,6 @@ if barstate.isconfirmed and canTrade and longCond
     if not na(slPrice) and riskDistance > 0
         activeStopLoss := slPrice
         activeTakeProfit := close + (riskDistance * riskReward)
-        tpAchieved := false
         strategy.entry("Long", strategy.long)
 
 // Short Entry
@@ -97,42 +97,21 @@ if barstate.isconfirmed and canTrade and shortCond
     if not na(slPrice) and riskDistance > 0
         activeStopLoss := slPrice
         activeTakeProfit := close - (riskDistance * riskReward)
-        tpAchieved := false
         strategy.entry("Short", strategy.short)
 
 //------------------------------------------------------------------------------
-// Trailing TP & Exit Logic
+// Exits
 //------------------------------------------------------------------------------
 
-// Long Position Management
 if strategy.position_size > 0
-    // Check if TP price target was reached (high reaches target)
-    if not tpAchieved and high >= activeTakeProfit
-        tpAchieved := true
+    strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss, limit = activeTakeProfit)
 
-    // If target was achieved, wait until RSI falls below 70 to close
-    if tpAchieved and rsi < longCrossLevel
-        strategy.close("Long", comment = "TP + RSI Exit")
-    else
-        // Keep hard Stop Loss active at all times
-        strategy.exit("Long SL", from_entry = "Long", stop = activeStopLoss)
-
-// Short Position Management
 if strategy.position_size < 0
-    // Check if TP price target was reached (low reaches target)
-    if not tpAchieved and low <= activeTakeProfit
-        tpAchieved := true
-
-    // If target was achieved, wait until RSI rises above 30 to close
-    if tpAchieved and rsi > shortCrossLevel
-        strategy.close("Short", comment = "TP + RSI Exit")
-    else
-        // Keep hard Stop Loss active at all times
-        strategy.exit("Short SL", from_entry = "Short", stop = activeStopLoss)
+    strategy.exit("Short Exit", from_entry = "Short", stop = activeStopLoss, limit = activeTakeProfit)
 
 //------------------------------------------------------------------------------
 // Plots
 //------------------------------------------------------------------------------
 
 plot(strategy.position_size != 0 ? activeStopLoss : na, title = "Stop Loss", color = color.red, linewidth = 2, style = plot.style_linebr)
-plot(strategy.position_size != 0 ? activeTakeProfit : na, title = "Target TP", color = tpAchieved ? color.orange : color.green, linewidth = 2, style = plot.style_linebr)
+plot(strategy.position_size != 0 ? activeTakeProfit : na, title = "Take Profit", color = color.green, linewidth = 2, style = plot.style_linebr)
