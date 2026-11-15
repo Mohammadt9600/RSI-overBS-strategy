@@ -93,8 +93,7 @@ if barstate.isconfirmed and canTrade and longCond
         breakEvenActive := false
         strategy.entry("Long", strategy.long)
 
-        // When BE is enabled, protect the position with a stop-only order.
-        // The initial TP is monitored at bar close, not placed as a limit order.
+        // Protect the position with a stop-only order when BE is enabled.
         if enableBreakEven
             strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss)
 
@@ -133,9 +132,11 @@ if strategy.position_size > 0
                 closeAtInitialTarget := true
                 strategy.close("Long", comment = "Initial TP - RSI not confirmed")
 
-        // First RSI decline after BE activation sets the new TP.
+        // On the first RSI decline, set TP to this bar's high
+        // and SL to the previous bar's low.
         if breakEvenActive and na(activeTakeProfit) and rsi < rsi[1]
             activeTakeProfit := high
+            activeStopLoss := low[1]
 
         if not closeAtInitialTarget
             strategy.exit(
@@ -173,9 +174,11 @@ if strategy.position_size < 0
                 closeAtInitialTarget := true
                 strategy.close("Short", comment = "Initial TP - RSI not confirmed")
 
-        // First RSI increase after BE activation sets the new TP.
+        // On the first RSI increase, set TP to this bar's low
+        // and SL to the previous bar's high.
         if breakEvenActive and na(activeTakeProfit) and rsi > rsi[1]
             activeTakeProfit := low
+            activeStopLoss := high[1]
 
         if not closeAtInitialTarget
             strategy.exit(
