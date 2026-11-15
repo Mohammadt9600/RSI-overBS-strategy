@@ -68,6 +68,11 @@ riskReward = input.float(2.0, title = "Risk / Reward Ratio", minval = 0.1, step 
 GRP_BE = "Break-Even Settings"
 enableBreakEven = input.bool(false, title = "Enable Break Even", group = GRP_BE)
 beOffsetTicks = input.int(0, title = "Break-Even Offset (Ticks)", minval = 0, group = GRP_BE)
+enableTrailingSlAfterTp = input.bool(
+     false,
+     title = "Trail Stop Two Bars Behind After New TP",
+     group = GRP_BE
+ )
 
 //------------------------------------------------------------------------------
 // RSI Calculation
@@ -194,6 +199,7 @@ if barstate.isconfirmed and canTrade and shortCond and rsiChangeAllowed and body
 if strategy.position_size > 0
     if enableBreakEven
         bool closeAtInitialTarget = false
+        bool newTargetSetThisBar = false
 
         // First touch of the original TP: decide using confirmed RSI.
         if not breakEvenActive and high >= activeTakeProfit
@@ -209,10 +215,20 @@ if strategy.position_size > 0
                 strategy.close("Long", comment = "Initial TP - RSI not confirmed")
 
         // On the first RSI decline, set TP to this bar's high
-        // and SL to the previous bar's low.
+        // and initially set SL to the previous bar's low.
         if breakEvenActive and na(activeTakeProfit) and rsi < rsi[1]
             activeTakeProfit := high
             activeStopLoss := low[1]
+            newTargetSetThisBar := true
+
+        // Starting on the next bar, trail SL two bars behind.
+        // Never lower the stop once trailing has begun.
+        if enableTrailingSlAfterTp and
+             not newTargetSetThisBar and
+             breakEvenActive and
+             not na(activeTakeProfit) and
+             not na(low[2])
+            activeStopLoss := math.max(activeStopLoss, low[2])
 
         if not closeAtInitialTarget
             strategy.exit(
@@ -236,6 +252,7 @@ if strategy.position_size > 0
 if strategy.position_size < 0
     if enableBreakEven
         bool closeAtInitialTarget = false
+        bool newTargetSetThisBar = false
 
         // First touch of the original TP: decide using confirmed RSI.
         if not breakEvenActive and low <= activeTakeProfit
@@ -251,10 +268,20 @@ if strategy.position_size < 0
                 strategy.close("Short", comment = "Initial TP - RSI not confirmed")
 
         // On the first RSI increase, set TP to this bar's low
-        // and SL to the previous bar's high.
+        // and initially set SL to the previous bar's high.
         if breakEvenActive and na(activeTakeProfit) and rsi > rsi[1]
             activeTakeProfit := low
             activeStopLoss := high[1]
+            newTargetSetThisBar := true
+
+        // Starting on the next bar, trail SL two bars behind.
+        // Never raise the stop once trailing has begun.
+        if enableTrailingSlAfterTp and
+             not newTargetSetThisBar and
+             breakEvenActive and
+             not na(activeTakeProfit) and
+             not na(high[2])
+            activeStopLoss := math.min(activeStopLoss, high[2])
 
         if not closeAtInitialTarget
             strategy.exit(
