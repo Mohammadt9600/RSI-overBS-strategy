@@ -17,6 +17,44 @@ strategy(
 GRP_RSI = "RSI Settings"
 rsiLengthInput = input.int(14, minval = 1, title = "RSI Length", group = GRP_RSI)
 rsiSourceInput = input.source(close, title = "Source", group = GRP_RSI)
+enableRsiJumpFilter = input.bool(
+     true,
+     title = "Enable RSI Jump Filter",
+     group = GRP_RSI
+ )
+maxRsiChangeMultiplier = input.float(
+     2.0,
+     title = "Maximum RSI Change Multiplier",
+     minval = 1.0,
+     step = 0.1,
+     group = GRP_RSI
+ )
+
+GRP_FILTERS = "Candle Entry Filters"
+enableBodyFilter = input.bool(
+     false,
+     title = "Enable Body Size Filter",
+     group = GRP_FILTERS
+ )
+maxBodyMultiplier = input.float(
+     2.0,
+     title = "Maximum Body Size Multiplier",
+     minval = 1.0,
+     step = 0.1,
+     group = GRP_FILTERS
+ )
+enableWickFilter = input.bool(
+     false,
+     title = "Enable Directional Wick Filter",
+     group = GRP_FILTERS
+ )
+maxWickMultiplier = input.float(
+     2.0,
+     title = "Maximum Wick Size Multiplier",
+     minval = 1.0,
+     step = 0.1,
+     group = GRP_FILTERS
+ )
 
 GRP_STRAT = "Strategy Levels"
 longCrossLevel  = input.float(70.0, title = "Long Trigger Level (Break Above)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
@@ -39,6 +77,44 @@ change = ta.change(rsiSourceInput)
 up = ta.rma(math.max(change, 0), rsiLengthInput)
 down = ta.rma(-math.min(change, 0), rsiLengthInput)
 rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
+
+// The trigger bar is excluded from the 14-bar RSI change average.
+rsiChange = math.abs(rsi - rsi[1])
+avgRsiChange = ta.sma(rsiChange[1], 14)
+rsiChangeAllowed = not enableRsiJumpFilter or (
+     not na(avgRsiChange) and
+     rsiChange <= avgRsiChange * maxRsiChangeMultiplier
+ )
+
+//------------------------------------------------------------------------------
+// Candle Entry Filters
+//------------------------------------------------------------------------------
+
+// Compare the trigger bar's body with the previous 14 candle bodies.
+bodySize = math.abs(close - open)
+avgBodySize = ta.sma(bodySize[1], 14)
+bodyAllowed = not enableBodyFilter or (
+     not na(avgBodySize) and
+     (bodySize == 0 or bodySize < avgBodySize * maxBodyMultiplier)
+ )
+
+// Long: upper wick vs. prior upper wicks.
+// Short: lower wick vs. prior lower wicks.
+upperWickSize = high - math.max(open, close)
+lowerWickSize = math.min(open, close) - low
+
+avgUpperWickSize = ta.sma(upperWickSize[1], 14)
+avgLowerWickSize = ta.sma(lowerWickSize[1], 14)
+
+longWickAllowed = not enableWickFilter or (
+     not na(avgUpperWickSize) and
+     (upperWickSize == 0 or upperWickSize < avgUpperWickSize * maxWickMultiplier)
+ )
+
+shortWickAllowed = not enableWickFilter or (
+     not na(avgLowerWickSize) and
+     (lowerWickSize == 0 or lowerWickSize < avgLowerWickSize * maxWickMultiplier)
+ )
 
 //------------------------------------------------------------------------------
 // State Tracking
@@ -83,7 +159,7 @@ beOffset = beOffsetTicks * syminfo.mintick
 //------------------------------------------------------------------------------
 
 // Long entry
-if barstate.isconfirmed and canTrade and longCond
+if barstate.isconfirmed and canTrade and longCond and rsiChangeAllowed and bodyAllowed and longWickAllowed
     slPrice = low[1]
     riskDistance = close - slPrice
 
@@ -98,7 +174,7 @@ if barstate.isconfirmed and canTrade and longCond
             strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss)
 
 // Short entry
-if barstate.isconfirmed and canTrade and shortCond
+if barstate.isconfirmed and canTrade and shortCond and rsiChangeAllowed and bodyAllowed and shortWickAllowed
     slPrice = high[1]
     riskDistance = slPrice - close
 
