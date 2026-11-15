@@ -1,4 +1,3 @@
-
 //@version=6
 strategy(
      title = "RSI Momentum Breakout Strategy",
@@ -21,12 +20,16 @@ rsiSourceInput = input.source(close, title = "Source", group = GRP_RSI)
 
 GRP_STRAT = "Strategy Levels"
 longCrossLevel  = input.float(70.0, title = "Long Trigger Level (Break Above)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-longPrepLevel   = input.float(60.0, title = "Long Origin Level (Was Below)",    minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
+longPrepLevel   = input.float(60.0, title = "Long Origin Level (Was Below)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
 
 shortCrossLevel = input.float(30.0, title = "Short Trigger Level (Break Below)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-shortPrepLevel  = input.float(40.0, title = "Short Origin Level (Was Above)",    minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
+shortPrepLevel  = input.float(40.0, title = "Short Origin Level (Was Above)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
 
 riskReward = input.float(2.0, title = "Risk / Reward Ratio", minval = 0.1, step = 0.1, group = GRP_STRAT)
+
+GRP_BE = "Break-Even Settings"
+enableBreakEven = input.bool(false, title = "Enable Break Even", group = GRP_BE)
+beOffsetTicks = input.int(0, title = "Break-Even Offset (Ticks)", minval = 0, group = GRP_BE)
 
 //------------------------------------------------------------------------------
 // RSI Calculation
@@ -38,10 +41,9 @@ down = ta.rma(-math.min(change, 0), rsiLengthInput)
 rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
 
 //------------------------------------------------------------------------------
-// State Tracking (Ensuring RSI came from prep level before triggering)
+// State Tracking
 //------------------------------------------------------------------------------
 
-// Check if RSI was below/above prep levels recently
 var bool primedForLong = false
 var bool primedForShort = false
 
@@ -51,13 +53,9 @@ if rsi <= longPrepLevel
 if rsi >= shortPrepLevel
     primedForShort := true
 
-// Long Condition: Primed from below 60, now crossing above 70 for the first time
 longCond = primedForLong and ta.crossover(rsi, longCrossLevel)
-
-// Short Condition: Primed from above 40, now crossing below 30 for the first time
 shortCond = primedForShort and ta.crossunder(rsi, shortCrossLevel)
 
-// Reset prime state on trigger
 if longCond
     primedForLong := false
 
@@ -70,48 +68,146 @@ if shortCond
 
 var float activeStopLoss = na
 var float activeTakeProfit = na
+var bool breakEvenActive = false
 
 if strategy.position_size == 0
     activeStopLoss := na
     activeTakeProfit := na
+    breakEvenActive := false
 
 canTrade = strategy.position_size == 0
+beOffset = beOffsetTicks * syminfo.mintick
 
 //------------------------------------------------------------------------------
-// Orders Execution
+// Entries
 //------------------------------------------------------------------------------
 
-// Long Entry
+// Long entry
 if barstate.isconfirmed and canTrade and longCond
     slPrice = low[1]
     riskDistance = close - slPrice
+
     if not na(slPrice) and riskDistance > 0
         activeStopLoss := slPrice
         activeTakeProfit := close + (riskDistance * riskReward)
+        breakEvenActive := false
         strategy.entry("Long", strategy.long)
 
-// Short Entry
+        // When BE is enabled, protect the position with a stop-only order.
+        // The initial TP is monitored at bar close, not placed as a limit order.
+        if enableBreakEven
+            strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss)
+
+// Short entry
 if barstate.isconfirmed and canTrade and shortCond
     slPrice = high[1]
     riskDistance = slPrice - close
+
     if not na(slPrice) and riskDistance > 0
         activeStopLoss := slPrice
         activeTakeProfit := close - (riskDistance * riskReward)
+        breakEvenActive := false
         strategy.entry("Short", strategy.short)
 
+        if enableBreakEven
+            strategy.exit("Short Exit", from_entry = "Short", stop = activeStopLoss)
+
 //------------------------------------------------------------------------------
-// Exits
+// Long Exit Management
 //------------------------------------------------------------------------------
 
 if strategy.position_size > 0
-    strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss, limit = activeTakeProfit)
+    if enableBreakEven
+        bool closeAtInitialTarget = false
+
+        // First touch of the original TP: decide using confirmed RSI.
+        if not breakEvenActive and high >= activeTakeProfit
+            if rsi > longCrossLevel and rsi > rsi[1]
+                breakEvenActive := true
+                activeStopLoss := math.max(
+                     activeStopLoss,
+                     strategy.position_avg_price + beOffset
+                 )
+                activeTakeProfit := na
+            else
+                closeAtInitialTarget := true
+                strategy.close("Long", comment = "Initial TP - RSI not confirmed")
+
+        // First RSI decline after BE activation sets the new TP.
+        if breakEvenActive and na(activeTakeProfit) and rsi < rsi[1]
+            activeTakeProfit := high
+
+        if not closeAtInitialTarget
+            strategy.exit(
+                 "Long Exit",
+                 from_entry = "Long",
+                 stop = activeStopLoss,
+                 limit = breakEvenActive ? activeTakeProfit : na
+             )
+    else
+        strategy.exit(
+             "Long Exit",
+             from_entry = "Long",
+             stop = activeStopLoss,
+             limit = activeTakeProfit
+         )
+
+//------------------------------------------------------------------------------
+// Short Exit Management
+//------------------------------------------------------------------------------
 
 if strategy.position_size < 0
-    strategy.exit("Short Exit", from_entry = "Short", stop = activeStopLoss, limit = activeTakeProfit)
+    if enableBreakEven
+        bool closeAtInitialTarget = false
+
+        // First touch of the original TP: decide using confirmed RSI.
+        if not breakEvenActive and low <= activeTakeProfit
+            if rsi < shortCrossLevel and rsi < rsi[1]
+                breakEvenActive := true
+                activeStopLoss := math.min(
+                     activeStopLoss,
+                     strategy.position_avg_price - beOffset
+                 )
+                activeTakeProfit := na
+            else
+                closeAtInitialTarget := true
+                strategy.close("Short", comment = "Initial TP - RSI not confirmed")
+
+        // First RSI increase after BE activation sets the new TP.
+        if breakEvenActive and na(activeTakeProfit) and rsi > rsi[1]
+            activeTakeProfit := low
+
+        if not closeAtInitialTarget
+            strategy.exit(
+                 "Short Exit",
+                 from_entry = "Short",
+                 stop = activeStopLoss,
+                 limit = breakEvenActive ? activeTakeProfit : na
+             )
+    else
+        strategy.exit(
+             "Short Exit",
+             from_entry = "Short",
+             stop = activeStopLoss,
+             limit = activeTakeProfit
+         )
 
 //------------------------------------------------------------------------------
 // Plots
 //------------------------------------------------------------------------------
 
-plot(strategy.position_size != 0 ? activeStopLoss : na, title = "Stop Loss", color = color.red, linewidth = 2, style = plot.style_linebr)
-plot(strategy.position_size != 0 ? activeTakeProfit : na, title = "Take Profit", color = color.green, linewidth = 2, style = plot.style_linebr)
+plot(
+     strategy.position_size != 0 ? activeStopLoss : na,
+     title = "Stop Loss",
+     color = color.red,
+     linewidth = 2,
+     style = plot.style_linebr
+ )
+
+plot(
+     strategy.position_size != 0 ? activeTakeProfit : na,
+     title = "Take Profit",
+     color = color.green,
+     linewidth = 2,
+     style = plot.style_linebr
+ )
