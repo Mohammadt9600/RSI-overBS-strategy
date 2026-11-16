@@ -57,19 +57,36 @@ maxWickMultiplier = input.float(
  )
 
 GRP_STRAT = "Strategy Levels"
-longCrossLevel  = input.float(70.0, title = "Long Trigger Level (Break Above)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-longPrepLevel   = input.float(60.0, title = "Long Origin Level (Was Below)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-
-shortCrossLevel = input.float(30.0, title = "Short Trigger Level (Break Below)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-shortPrepLevel  = input.float(40.0, title = "Short Origin Level (Was Above)", minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT)
-
-riskReward = input.float(2.0, title = "Risk / Reward Ratio", minval = 0.1, step = 0.1, group = GRP_STRAT)
+longCrossLevel = input.float(
+     70.0, title = "Long Trigger Level (Break Above)",
+     minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT
+ )
+longPrepLevel = input.float(
+     60.0, title = "Long Origin Level (Was Below)",
+     minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT
+ )
+shortCrossLevel = input.float(
+     30.0, title = "Short Trigger Level (Break Below)",
+     minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT
+ )
+shortPrepLevel = input.float(
+     40.0, title = "Short Origin Level (Was Above)",
+     minval = 0.0, maxval = 100.0, step = 0.5, group = GRP_STRAT
+ )
+riskReward = input.float(
+     2.0, title = "Risk / Reward Ratio",
+     minval = 0.1, step = 0.1, group = GRP_STRAT
+ )
 
 GRP_BE = "Break-Even Settings"
-enableBreakEven = input.bool(false, title = "Enable Break Even", group = GRP_BE)
-beOffsetTicks = input.int(0, title = "Break-Even Offset (Ticks)", minval = 0, group = GRP_BE)
+enableBreakEven = input.bool(
+     false, title = "Enable Break Even", group = GRP_BE
+ )
+beOffsetTicks = input.int(
+     0, title = "Break-Even Offset (Ticks)", minval = 0, group = GRP_BE
+ )
 enableTrailingSlAfterTp = input.bool(
-     false,
+     true,
      title = "Trail Stop Two Bars Behind After New TP",
      group = GRP_BE
  )
@@ -83,7 +100,7 @@ up = ta.rma(math.max(change, 0), rsiLengthInput)
 down = ta.rma(-math.min(change, 0), rsiLengthInput)
 rsi = down == 0 ? 100 : up == 0 ? 0 : 100 - (100 / (1 + up / down))
 
-// The trigger bar is excluded from the 14-bar RSI change average.
+// Exclude the trigger bar from the previous 14-bar average.
 rsiChange = math.abs(rsi - rsi[1])
 avgRsiChange = ta.sma(rsiChange[1], 14)
 rsiChangeAllowed = not enableRsiJumpFilter or (
@@ -95,7 +112,6 @@ rsiChangeAllowed = not enableRsiJumpFilter or (
 // Candle Entry Filters
 //------------------------------------------------------------------------------
 
-// Compare the trigger bar's body with the previous 14 candle bodies.
 bodySize = math.abs(close - open)
 avgBodySize = ta.sma(bodySize[1], 14)
 bodyAllowed = not enableBodyFilter or (
@@ -103,8 +119,6 @@ bodyAllowed = not enableBodyFilter or (
      (bodySize == 0 or bodySize < avgBodySize * maxBodyMultiplier)
  )
 
-// Long: upper wick vs. prior upper wicks.
-// Short: lower wick vs. prior lower wicks.
 upperWickSize = high - math.max(open, close)
 lowerWickSize = math.min(open, close) - low
 
@@ -150,11 +164,13 @@ if shortCond
 var float activeStopLoss = na
 var float activeTakeProfit = na
 var bool breakEvenActive = false
+var bool initialTargetRejected = false
 
 if strategy.position_size == 0
     activeStopLoss := na
     activeTakeProfit := na
     breakEvenActive := false
+    initialTargetRejected := false
 
 canTrade = strategy.position_size == 0
 beOffset = beOffsetTicks * syminfo.mintick
@@ -163,8 +179,8 @@ beOffset = beOffsetTicks * syminfo.mintick
 // Entries
 //------------------------------------------------------------------------------
 
-// Long entry
-if barstate.isconfirmed and canTrade and longCond and rsiChangeAllowed and bodyAllowed and longWickAllowed
+if barstate.isconfirmed and canTrade and longCond and
+     rsiChangeAllowed and bodyAllowed and longWickAllowed
     slPrice = low[1]
     riskDistance = close - slPrice
 
@@ -172,14 +188,19 @@ if barstate.isconfirmed and canTrade and longCond and rsiChangeAllowed and bodyA
         activeStopLoss := slPrice
         activeTakeProfit := close + (riskDistance * riskReward)
         breakEvenActive := false
+        initialTargetRejected := false
+
         strategy.entry("Long", strategy.long)
 
-        // Protect the position with a stop-only order when BE is enabled.
+        // Keep TP1 conditional on the RSI check when BE is enabled.
         if enableBreakEven
-            strategy.exit("Long Exit", from_entry = "Long", stop = activeStopLoss)
+            strategy.exit(
+                 "Long Exit", from_entry = "Long",
+                 stop = activeStopLoss
+             )
 
-// Short entry
-if barstate.isconfirmed and canTrade and shortCond and rsiChangeAllowed and bodyAllowed and shortWickAllowed
+if barstate.isconfirmed and canTrade and shortCond and
+     rsiChangeAllowed and bodyAllowed and shortWickAllowed
     slPrice = high[1]
     riskDistance = slPrice - close
 
@@ -187,10 +208,15 @@ if barstate.isconfirmed and canTrade and shortCond and rsiChangeAllowed and body
         activeStopLoss := slPrice
         activeTakeProfit := close - (riskDistance * riskReward)
         breakEvenActive := false
+        initialTargetRejected := false
+
         strategy.entry("Short", strategy.short)
 
         if enableBreakEven
-            strategy.exit("Short Exit", from_entry = "Short", stop = activeStopLoss)
+            strategy.exit(
+                 "Short Exit", from_entry = "Short",
+                 stop = activeStopLoss
+             )
 
 //------------------------------------------------------------------------------
 // Long Exit Management
@@ -198,45 +224,52 @@ if barstate.isconfirmed and canTrade and shortCond and rsiChangeAllowed and body
 
 if strategy.position_size > 0
     if enableBreakEven
-        bool closeAtInitialTarget = false
         bool newTargetSetThisBar = false
 
-        // First touch of the original TP: decide using confirmed RSI.
-        if not breakEvenActive and high >= activeTakeProfit
+        // Check RSI on the first confirmed bar that touches TP1.
+        if barstate.isconfirmed and
+             not breakEvenActive and
+             not initialTargetRejected and
+             high >= activeTakeProfit
             if rsi > longCrossLevel and rsi > rsi[1]
                 breakEvenActive := true
                 activeStopLoss := math.max(
                      activeStopLoss,
                      strategy.position_avg_price + beOffset
                  )
+                // No TP is active while favorable RSI momentum continues.
                 activeTakeProfit := na
             else
-                closeAtInitialTarget := true
-                strategy.close("Long", comment = "Initial TP - RSI not confirmed")
+                // Keep a TP1 limit order instead of closing at market.
+                initialTargetRejected := true
 
-        // On the first RSI decline, set TP to this bar's high
-        // and initially set SL to the previous bar's low.
-        if breakEvenActive and na(activeTakeProfit) and rsi < rsi[1]
+        // Equal RSI also ends the favorable-momentum phase.
+        if barstate.isconfirmed and
+             breakEvenActive and
+             na(activeTakeProfit) and
+             rsi <= rsi[1] and
+             not na(low[2])
             activeTakeProfit := high
-            activeStopLoss := low[1]
+            activeStopLoss := low[2]
             newTargetSetThisBar := true
 
-        // Starting on the next bar, trail SL two bars behind.
-        // Never lower the stop once trailing has begun.
-        if enableTrailingSlAfterTp and
-             not newTargetSetThisBar and
+        // From the following bar, trail two bars behind, upward only.
+        if barstate.isconfirmed and
+             enableTrailingSlAfterTp and
              breakEvenActive and
              not na(activeTakeProfit) and
+             not newTargetSetThisBar and
              not na(low[2])
             activeStopLoss := math.max(activeStopLoss, low[2])
 
-        if not closeAtInitialTarget
-            strategy.exit(
-                 "Long Exit",
-                 from_entry = "Long",
-                 stop = activeStopLoss,
-                 limit = breakEvenActive ? activeTakeProfit : na
-             )
+        strategy.exit(
+             "Long Exit",
+             from_entry = "Long",
+             stop = activeStopLoss,
+             limit = breakEvenActive or initialTargetRejected
+                 ? activeTakeProfit
+                 : na
+         )
     else
         strategy.exit(
              "Long Exit",
@@ -251,45 +284,52 @@ if strategy.position_size > 0
 
 if strategy.position_size < 0
     if enableBreakEven
-        bool closeAtInitialTarget = false
         bool newTargetSetThisBar = false
 
-        // First touch of the original TP: decide using confirmed RSI.
-        if not breakEvenActive and low <= activeTakeProfit
+        // Check RSI on the first confirmed bar that touches TP1.
+        if barstate.isconfirmed and
+             not breakEvenActive and
+             not initialTargetRejected and
+             low <= activeTakeProfit
             if rsi < shortCrossLevel and rsi < rsi[1]
                 breakEvenActive := true
                 activeStopLoss := math.min(
                      activeStopLoss,
                      strategy.position_avg_price - beOffset
                  )
+                // No TP is active while favorable RSI momentum continues.
                 activeTakeProfit := na
             else
-                closeAtInitialTarget := true
-                strategy.close("Short", comment = "Initial TP - RSI not confirmed")
+                // Keep a TP1 limit order instead of closing at market.
+                initialTargetRejected := true
 
-        // On the first RSI increase, set TP to this bar's low
-        // and initially set SL to the previous bar's high.
-        if breakEvenActive and na(activeTakeProfit) and rsi > rsi[1]
+        // Equal RSI also ends the favorable-momentum phase.
+        if barstate.isconfirmed and
+             breakEvenActive and
+             na(activeTakeProfit) and
+             rsi >= rsi[1] and
+             not na(high[2])
             activeTakeProfit := low
-            activeStopLoss := high[1]
+            activeStopLoss := high[2]
             newTargetSetThisBar := true
 
-        // Starting on the next bar, trail SL two bars behind.
-        // Never raise the stop once trailing has begun.
-        if enableTrailingSlAfterTp and
-             not newTargetSetThisBar and
+        // From the following bar, trail two bars behind, downward only.
+        if barstate.isconfirmed and
+             enableTrailingSlAfterTp and
              breakEvenActive and
              not na(activeTakeProfit) and
+             not newTargetSetThisBar and
              not na(high[2])
             activeStopLoss := math.min(activeStopLoss, high[2])
 
-        if not closeAtInitialTarget
-            strategy.exit(
-                 "Short Exit",
-                 from_entry = "Short",
-                 stop = activeStopLoss,
-                 limit = breakEvenActive ? activeTakeProfit : na
-             )
+        strategy.exit(
+             "Short Exit",
+             from_entry = "Short",
+             stop = activeStopLoss,
+             limit = breakEvenActive or initialTargetRejected
+                 ? activeTakeProfit
+                 : na
+         )
     else
         strategy.exit(
              "Short Exit",
